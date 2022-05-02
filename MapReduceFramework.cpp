@@ -91,11 +91,14 @@ void updatePercentageReduce(JobContext* jobContext, int numOfElements){
 void mapPhase(void* arg, void* context){
 
     JobContext* jc = (JobContext*) arg;
-    int oldValue = *(jc->atomic_counter)++;
+
+    int oldValue = (*(jc->atomic_counter))++;
+
     while(oldValue < jc->inputVec->size()) {
-        InputPair kv = (*(jc->inputVec))[oldValue];
+        InputPair kv = (*(jc->inputVec)).at(oldValue);
         jc->client->map(kv.first, kv.second, context);
         updatePercentageMap(jc);
+        oldValue = (*(jc->atomic_counter))++;
     }
 }
 
@@ -182,15 +185,18 @@ void reducePhase(void* arg, void* context){
 void* mapSortReduceThread(void* arg){
 
     JobContext* jc = (JobContext*) arg;
+
     int id = ++(*(jc->threadsId));
-    ThreadContext threadContext =  jc->contexts[id];
-    threadContext.intermediateVec = new IntermediateVec();
-    threadContext.outputVec = jc->outputVec;
-    threadContext.intermediaryElements = jc->intermediaryElements;
-    threadContext.outputVec = jc->outputVec;
+    ThreadContext* threadContext = new ThreadContext();
+    jc->contexts[0] = *threadContext;
+    threadContext->intermediateVec = new IntermediateVec();
+    threadContext->outputVec = jc->outputVec;
+    threadContext->intermediaryElements = jc->intermediaryElements;
+    threadContext->outputVec = jc->outputVec;
 
     // the map phase
     mapPhase(arg, &threadContext);
+
     sortPhase(&threadContext);
     if(++(*(jc->atomic_barrier)) == jc->multiThreadLevel) // indicates sort phase of this thread is over
     {
@@ -205,6 +211,7 @@ void* mapSortReduceThread(void* arg){
         exit(1);
     }
     reducePhase(arg, &threadContext);
+
 }
 
 
@@ -250,6 +257,7 @@ void* MainThread(void* arg){
     mainThread->outputElements = jc->outputElements;
     jc->jobState.stage = MAP_STAGE;
     jc->jobState.percentage = 0;
+
     for (int i = 1; i < jc->multiThreadLevel; ++i) {
         if(pthread_create(jc->threads + i, NULL, mapSortReduceThread, jc) !=  0){
             cerr << SYSTEM_ERROR << "pthread_create";
@@ -257,9 +265,11 @@ void* MainThread(void* arg){
         }
     }
 
-    mapPhase(&jc, &mainThread);
+    mapPhase(jc, &mainThread);
+
     jc->fullIntermediaryElements = (int)(*jc->intermediaryElements);
     sortPhase(&mainThread);
+
     if(++(*(jc->atomic_barrier)) < jc->multiThreadLevel)
     {
         if(pthread_cond_wait(&(jc->cvMapSortBarrier), NULL) != 0) {
@@ -267,6 +277,7 @@ void* MainThread(void* arg){
             exit(1);
         }
     }
+
     jc->atomic_counter = 0;
     jc->jobState.stage = SHUFFLE_STAGE;
     shufflePhase(&jc);
@@ -292,10 +303,7 @@ JobHandle startMapReduceJob(const MapReduceClient& client,
         cerr << SYSTEM_ERROR << "pthread_create";
         exit(1);
     }
-
     return (JobHandle)(jobContext);
-
-
 }
 
 void getJobState(JobHandle job, JobState* state){
