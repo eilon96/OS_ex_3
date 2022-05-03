@@ -12,9 +12,14 @@
 using namespace std;
 struct ThreadContext{
     IntermediateVec* intermediateVec;
-    atomic<int>* intermediaryElements;
+
+    int* intermediaryElements;
+    pthread_mutex_t intermediaryElementsMutex;
+
     OutputVec* outputVec;
-    atomic<int>* outputElements;
+
+    int* outputElements;
+    pthread_mutex_t outputElementsMutex;
 };
 
 struct JobContext{
@@ -29,15 +34,23 @@ struct JobContext{
     int fullIntermediaryElements;
     pthread_t* threads; // pointer to an array of all existing threads
     ThreadContext* contexts;
+
+    int map_counter; // a generic count to be used
+    pthread_mutex_t mapMutex = PTHREAD_MUTEX_INITIALIZER;
+
+    int intermediaryElements; // a count for the amount of intermediary elements
+    pthread_mutex_t intermediaryElementsMutex = PTHREAD_MUTEX_INITIALIZER;
+
+    int outputElements; // a count for the amount of output element
+    pthread_mutex_t outputElementsMutex = PTHREAD_MUTEX_INITIALIZER;
+
+    int atomic_barrier; // a counter to use to implement the barrier
+    pthread_mutex_t atomic_barrierMutex = PTHREAD_MUTEX_INITIALIZER;
+
     bool is_waiting;
 
-    atomic<int>* intermediaryElements; // a count for the amount of intermediary elements
-    atomic<int>* outputElements; // a count for the amount of output elements
-    atomic<int>* atomic_counter; // a generic count to be used3
-    atomic<int>* atomic_barrier; // a counter to use to implement the barrier
     atomic<int>* threadsId; // gives an id to each thread
 
-    //  pthread_mutex_t waitMutex = PTHREAD_MUTEX_INITIALIZER;
     pthread_cond_t cvMapSortBarrier = PTHREAD_COND_INITIALIZER;
     pthread_cond_t cvShuffleBarrier = PTHREAD_COND_INITIALIZER;
 };
@@ -47,14 +60,20 @@ void emit2 (K2* key, V2* value, void* context){
     ThreadContext* threadContext = (ThreadContext*) context;
     IntermediatePair kv2 = IntermediatePair(key, value);
     threadContext->intermediateVec->push_back(kv2);
+    pthread_mutex_lock(&(threadContext->intermediaryElementsMutex));
     (*(threadContext->intermediaryElements))++;
+    pthread_mutex_unlock(&(threadContext->intermediaryElementsMutex));
+
 }
 
 void emit3 (K3* key, V3* value, void* context){
     ThreadContext* threadContext = (ThreadContext*) context;
     OutputPair kv3 = OutputPair(key, value);
     threadContext->outputVec->push_back(kv3);
+    pthread_mutex_lock(&(threadContext->outputElementsMutex));
     (*(threadContext->outputElements))++;
+    pthread_mutex_unlock(&(threadContext->outputElementsMutex));
+
 }
 
 /*
@@ -63,23 +82,23 @@ void emit3 (K3* key, V3* value, void* context){
  */
 void updatePercentageMap(JobContext* jobContext) {
     // the jobState is shared by all threads which makes changing it a critical code segment
-    pthread_mutex_lock(&jobContext->jobStateMutex);
-    jobContext->jobState.percentage = *(jobContext->intermediaryElements) / jobContext->inputVec->size() * 100;
-    pthread_mutex_unlock(&jobContext->jobStateMutex);
+    pthread_mutex_lock(&(jobContext->jobStateMutex));
+    jobContext->jobState.percentage = jobContext->intermediaryElements / jobContext->inputVec->size() * 100;
+    pthread_mutex_unlock(&(jobContext->jobStateMutex));
 }
 void updatePercentageShuffle(JobContext *jobContext) {
     // the jobState is shared by all threads which makes changing it a critical code segment
-    pthread_mutex_lock(&jobContext->jobStateMutex);
-    jobContext->jobState.percentage = *(jobContext->intermediaryElements) / jobContext->fullIntermediaryElements * 100;
-    pthread_mutex_unlock(&jobContext->jobStateMutex);
+    pthread_mutex_lock(&(jobContext->jobStateMutex));
+    jobContext->jobState.percentage = (jobContext->intermediaryElements) / jobContext->fullIntermediaryElements * 100;
+    pthread_mutex_unlock(&(jobContext->jobStateMutex));
 }
 
 
 void updatePercentageReduce(JobContext* jobContext, int numOfElements){
     // the jobState is shared by all threads which makes changing it a critical code segment
-    pthread_mutex_lock(&jobContext->jobStateMutex);
+    pthread_mutex_lock(&(jobContext->jobStateMutex));
     jobContext->jobState.percentage = numOfElements / jobContext->fullIntermediaryElements * 100;
-    pthread_mutex_unlock(&jobContext->jobStateMutex);
+    pthread_mutex_unlock(&(jobContext->jobStateMutex));
 }
 
 /**
@@ -91,10 +110,20 @@ void updatePercentageReduce(JobContext* jobContext, int numOfElements){
 void mapPhase(void* arg, void* context){
 
     JobContext* jc = (JobContext*) arg;
-    while(int oldValue = *(jc->atomic_counter)++ < jc->inputVec->size()) {
+
+    pthread_mutex_lock(&(jc->mapMutex));
+    int oldValue = (jc->map_counter)++;
+    pthread_mutex_unlock(&(jc->mapMutex));
+
+    while((oldValue < jc->inputVec->size())) {
         InputPair kv = (*(jc->inputVec))[oldValue];
         jc->client->map(kv.first, kv.second, context);
         updatePercentageMap(jc);
+
+
+        pthread_mutex_lock(&(jc->mapMutex));
+        oldValue = (jc->map_counter)++;
+        pthread_mutex_unlock(&(jc->mapMutex));
     }
 }
 
@@ -164,11 +193,18 @@ void shufflePhase(void* arg) {
 
 void reducePhase(void* arg, void* context){
     JobContext* jc = (JobContext*) arg;
+    pthread_mutex_lock(&(jc->mapMutex));
+    int oldValue = (jc->map_counter)++;
+    pthread_mutex_unlock(&(jc->mapMutex));
 
-    while(int oldValue = *(jc->atomic_counter)++ < jc->intermediateVec.size()) {
+    while(oldValue < jc->intermediateVec.size()) {
         IntermediateVec kv = ((jc->intermediateVec))[oldValue];
         jc->client->reduce(&kv, context);
         updatePercentageReduce(jc, kv.size());
+
+        pthread_mutex_lock(&(jc->mapMutex));
+        oldValue = (jc->map_counter)++;
+        pthread_mutex_unlock(&(jc->mapMutex));
     }
 }
 
@@ -185,13 +221,20 @@ void* mapSortReduceThread(void* arg){
     ThreadContext threadContext =  jc->contexts[id];
     threadContext.intermediateVec = new IntermediateVec();
     threadContext.outputVec = jc->outputVec;
-    threadContext.intermediaryElements = jc->intermediaryElements;
+    threadContext.intermediaryElements = &(jc->intermediaryElements);
     threadContext.outputVec = jc->outputVec;
+    threadContext.intermediaryElementsMutex = jc->intermediaryElementsMutex;
+    threadContext.outputElementsMutex = jc->outputElementsMutex;
 
     // the map phase
     mapPhase(arg, &threadContext);
     sortPhase(&threadContext);
-    if(++(*(jc->atomic_barrier)) == jc->multiThreadLevel) // indicates sort phase of this thread is over
+
+    pthread_mutex_lock(&(jc->atomic_barrierMutex));
+    (jc->atomic_barrier)++;
+    pthread_mutex_unlock(&(jc->atomic_barrierMutex));
+
+    if((jc->atomic_barrier) == jc->multiThreadLevel) // indicates sort phase of this thread is over
     {
         // declares all threads finished the sort phase
         if (pthread_cond_broadcast(&(jc->cvMapSortBarrier)) != 0) {
@@ -228,10 +271,10 @@ void initJobContext(const MapReduceClient& client,
     jobContext->contexts = new ThreadContext[multiThreadLevel];
     jobContext->is_waiting = false;
 
-    jobContext->atomic_counter = new atomic<int>(0);
-    jobContext->atomic_barrier = new atomic<int>(0);
-    jobContext->intermediaryElements = new atomic<int>(0);
-    jobContext->outputElements = new atomic<int>(0);
+    jobContext->map_counter = 0;
+    jobContext->atomic_barrier = 0;
+    jobContext->intermediaryElements =0;
+    jobContext->outputElements = 0;
     jobContext->threadsId = new atomic<int>(0);
 
 }
@@ -245,8 +288,11 @@ void* MainThread(void* arg){
 
     mainThread->intermediateVec = intermediateVec;
     mainThread->outputVec = jc->outputVec;
-    mainThread->intermediaryElements = jc->intermediaryElements;
-    mainThread->outputElements = jc->outputElements;
+    mainThread->intermediaryElements = &(jc->intermediaryElements);
+    mainThread->outputElements = &(jc->outputElements);
+    mainThread->intermediaryElementsMutex = jc->intermediaryElementsMutex;
+    mainThread->outputElementsMutex = jc->outputElementsMutex;
+
     jc->jobState.stage = MAP_STAGE;
     jc->jobState.percentage = 0;
     for (int i = 1; i < jc->multiThreadLevel; ++i) {
@@ -257,16 +303,23 @@ void* MainThread(void* arg){
     }
 
     mapPhase(jc, mainThread);
-    jc->fullIntermediaryElements = *(jc->intermediaryElements);
-    sortPhase(&mainThread);
-    if(++(*(jc->atomic_barrier)) < jc->multiThreadLevel)
+    pthread_mutex_lock(&(jc->intermediaryElementsMutex));
+    jc->fullIntermediaryElements = jc->intermediaryElements;
+    pthread_mutex_unlock(&(jc->intermediaryElementsMutex));
+    sortPhase(mainThread);
+
+    pthread_mutex_lock(&(jc->atomic_barrierMutex));
+    (jc->atomic_barrier)++;
+    pthread_mutex_unlock(&(jc->atomic_barrierMutex));
+
+    if((jc->atomic_barrier) < jc->multiThreadLevel)
     {
         if(pthread_cond_wait(&(jc->cvMapSortBarrier), NULL) != 0) {
             cerr << SYSTEM_ERROR << "pthread_cond_wait mapSortBarrier main thread";
             exit(1);
         }
     }
-    jc->atomic_counter = 0;
+    jc->map_counter = 0;
     jc->jobState.stage = SHUFFLE_STAGE;
     shufflePhase(&jc);
     jc->jobState.stage = REDUCE_STAGE;
@@ -275,6 +328,7 @@ void* MainThread(void* arg){
         exit(1);
     }
     reducePhase(&jc, &mainThread);
+
 
 }
 

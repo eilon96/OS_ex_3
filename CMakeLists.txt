@@ -17,15 +17,14 @@ project(ex3 VERSION 1.0 LANGUAGES C CXX)
 
 
 # Ensure system has pthreads
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
 add_library(MapReduceFramework
-MapReduceClient.h
-MapReduceFramework.cpp MapReduceFramework.h
-# ------------- Add your own .h/.cpp files here -------------------
-MapReduceFramework.cpp)
+        MapReduceClient.h
+        MapReduceFramework.cpp MapReduceFramework.h
+        # ------------- Add your own .h/.cpp files here -------------------
+        )
 
 
 set_property(TARGET MapReduceFramework PROPERTY CXX_STANDARD 11)
@@ -36,20 +35,3 @@ target_link_libraries(MapReduceFramework PUBLIC Threads::Threads)
 
 # Add tests
 add_subdirectory(mattanTests)
-
-
-#cmake_minimum_required(VERSION 3.21)
-#project(Resources_20220426)
-
-#set(CMAKE_CXX_STANDARD 11)
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
-
-#include_directories(Atomic Barrier Sample Client)
-
-#add_executable(Resources_20220426
-#        MapReduceFramework.h
-#        MapReduceFramework.cpp
-#        MapReduceClient.h
-#        Sample\ Client/SampleClient.cpp
-#        Atomic/atomicdemo.cpp Atomic/atomicdemo_multivar.cpp
-#        Barrier/barrierdemo.cpp Barrier/Barrier.cpp )
