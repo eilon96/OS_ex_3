@@ -53,6 +53,7 @@ struct JobContext{
 
     pthread_cond_t cvMapSortBarrier = PTHREAD_COND_INITIALIZER;
     pthread_cond_t cvShuffleBarrier = PTHREAD_COND_INITIALIZER;
+    pthread_cond_t cvReduceEnd = PTHREAD_COND_INITIALIZER;
 };
 
 void emit2 (K2* key, V2* value, void* context){
@@ -116,10 +117,11 @@ void mapPhase(void* arg, void* context){
     pthread_mutex_unlock(&(jc->mapMutex));
 
     while((oldValue < jc->inputVec->size())) {
-        InputPair kv = (*(jc->inputVec))[oldValue];
-        jc->client->map(kv.first, kv.second, context);
-        updatePercentageMap(jc);
 
+       InputPair kv = (*(jc->inputVec))[oldValue];
+       jc->client->map(kv.first, kv.second, context);
+
+        updatePercentageMap(jc);
 
         pthread_mutex_lock(&(jc->mapMutex));
         oldValue = (jc->map_counter)++;
@@ -206,6 +208,10 @@ void reducePhase(void* arg, void* context){
         oldValue = (jc->map_counter)++;
         pthread_mutex_unlock(&(jc->mapMutex));
     }
+    if (pthread_cond_broadcast(&(jc->cvReduceEnd)) != 0) {
+        cerr << SYSTEM_ERROR << "pthread_cond_broadcast Reduce";
+        exit(1);
+    }
 }
 
 /*
@@ -218,13 +224,16 @@ void* mapSortReduceThread(void* arg){
 
     JobContext* jc = (JobContext*) arg;
     int id = ++(*(jc->threadsId));
-    ThreadContext threadContext =  jc->contexts[id];
-    threadContext.intermediateVec = new IntermediateVec();
-    threadContext.outputVec = jc->outputVec;
-    threadContext.intermediaryElements = &(jc->intermediaryElements);
-    threadContext.outputVec = jc->outputVec;
-    threadContext.intermediaryElementsMutex = jc->intermediaryElementsMutex;
-    threadContext.outputElementsMutex = jc->outputElementsMutex;
+    ThreadContext* threadContext = new ThreadContext();
+    jc->contexts[id] = *threadContext;
+    IntermediateVec* intermediateVec = new IntermediateVec();
+
+    threadContext->intermediateVec = intermediateVec;
+    threadContext->outputVec = jc->outputVec;
+    threadContext->intermediaryElements = &(jc->intermediaryElements);
+    threadContext->outputElements = &(jc->outputElements);
+    threadContext->intermediaryElementsMutex = jc->intermediaryElementsMutex;
+    threadContext->outputElementsMutex = jc->outputElementsMutex;
 
     // the map phase
     mapPhase(arg, &threadContext);
@@ -242,11 +251,13 @@ void* mapSortReduceThread(void* arg){
             exit(1);
         }
     }
+
     if(pthread_cond_wait(&(jc->cvShuffleBarrier), NULL) != 0){
         cerr << SYSTEM_ERROR << "pthread_cond_wait shuffle";
         exit(1);
     }
     reducePhase(arg, &threadContext);
+
 }
 
 
@@ -314,20 +325,30 @@ void* MainThread(void* arg){
 
     if((jc->atomic_barrier) < jc->multiThreadLevel)
     {
+        /*
         if(pthread_cond_wait(&(jc->cvMapSortBarrier), NULL) != 0) {
             cerr << SYSTEM_ERROR << "pthread_cond_wait mapSortBarrier main thread";
             exit(1);
         }
+         */
+
     }
+
     jc->map_counter = 0;
     jc->jobState.stage = SHUFFLE_STAGE;
-    shufflePhase(&jc);
+
+    shufflePhase(jc);
     jc->jobState.stage = REDUCE_STAGE;
     if (pthread_cond_broadcast(&(jc->cvShuffleBarrier)) != 0) {
         cerr << SYSTEM_ERROR << "pthread_cond_broadcast ShuffleBarrier main thread";
         exit(1);
     }
-    reducePhase(&jc, &mainThread);
+    reducePhase(jc, mainThread);
+    if(pthread_cond_wait(&(jc->cvReduceEnd), NULL) != 0) {
+        cerr << SYSTEM_ERROR << "pthread_cond_wait cvReduceEnd main thread";
+        exit(1);
+    }
+    jc->is_waiting = true;
 
 
 }
@@ -361,18 +382,20 @@ void getJobState(JobHandle job, JobState* state){
 
 void waitForJob(JobHandle job) {
     auto jc = (JobContext *) job;
+
     if (!jc->is_waiting) {
         jc->is_waiting = true;
-        if (pthread_join(jc->threads[0], NULL)) {
+        if (pthread_join((jc->threads[0]), NULL)) {
             cerr << SYSTEM_ERROR << "pthread_join waitForJob ";
             exit(1);
         }
-        jc->is_waiting = false;
+
     }
 }
 
 void closeJobHandle(JobHandle job){
     waitForJob(job);
+
     auto jc = (JobContext*) job;
     delete &jc->intermediateVec;
 
@@ -384,4 +407,5 @@ void closeJobHandle(JobHandle job){
     pthread_cond_destroy(&jc->cvShuffleBarrier);
     pthread_cond_destroy(&jc->cvMapSortBarrier);
     delete jc;
+
 }
