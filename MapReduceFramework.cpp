@@ -95,7 +95,9 @@ void mapPhase(void* arg, void* context){
         InputPair kv = (*(jc->inputVec))[oldValue];
         jc->client->map(kv.first, kv.second, context);
         updatePercentageMap(jc);
+        oldValue = *(jc->atomic_counter)++;
     }
+    int i =1;
 }
 
 void sortPhase(void* context){
@@ -169,6 +171,7 @@ void reducePhase(void* arg, void* context){
         IntermediateVec kv = ((jc->intermediateVec))[oldValue];
         jc->client->reduce(&kv, context);
         updatePercentageReduce(jc, kv.size());
+        oldValue = *(jc->atomic_counter)++;
     }
 }
 
