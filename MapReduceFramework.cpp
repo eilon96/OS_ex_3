@@ -91,14 +91,11 @@ void updatePercentageReduce(JobContext* jobContext, int numOfElements){
 void mapPhase(void* arg, void* context){
 
     JobContext* jc = (JobContext*) arg;
-    int oldValue = *(jc->atomic_counter)++;
-    while(oldValue < jc->inputVec->size()) {
+    while(int oldValue = *(jc->atomic_counter)++ < jc->inputVec->size()) {
         InputPair kv = (*(jc->inputVec))[oldValue];
         jc->client->map(kv.first, kv.second, context);
         updatePercentageMap(jc);
-        oldValue = *(jc->atomic_counter)++;
     }
-    int i =1;
 }
 
 void sortPhase(void* context){
@@ -167,12 +164,11 @@ void shufflePhase(void* arg) {
 
 void reducePhase(void* arg, void* context){
     JobContext* jc = (JobContext*) arg;
-    int oldValue = *(jc->atomic_counter)++;
-    while(oldValue < jc->intermediateVec.size()) {
+
+    while(int oldValue = *(jc->atomic_counter)++ < jc->intermediateVec.size()) {
         IntermediateVec kv = ((jc->intermediateVec))[oldValue];
         jc->client->reduce(&kv, context);
         updatePercentageReduce(jc, kv.size());
-        oldValue = *(jc->atomic_counter)++;
     }
 }
 
