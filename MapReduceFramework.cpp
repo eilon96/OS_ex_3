@@ -236,11 +236,10 @@ void* mapSortReduceThread(void* arg){
     sortPhase(threadContext);
 
     pthread_mutex_lock(&(jc->atomic_barrierMutex));
-    int oldValue = ++(jc->atomic_barrier);
-    pthread_mutex_unlock(&(jc->atomic_barrierMutex));
-
-    if(oldValue == jc->multiThreadLevel) // indicates sort phase of this thread is over
+    if(++(jc->atomic_barrier) == jc->multiThreadLevel) // indicates sort phase of this thread is over
     {
+        cout<< "MapSortBarrier Brodcast\n";
+        cout << *(threadContext->intermediaryElements) << "\n";
         // declares all threads finished the sort phase
         if (pthread_cond_broadcast(&(jc->cvMapSortBarrier)) != 0) {
             cerr << SYSTEM_ERROR << "pthread_cond_broadcast MapSort";
@@ -248,10 +247,14 @@ void* mapSortReduceThread(void* arg){
         }
     }
 
-    if(pthread_cond_wait(&(jc->cvShuffleBarrier), NULL) != 0){
+    cout<< "wait for  ShuffleBarrier: " << jc->atomic_barrier <<"\n";
+
+    if(pthread_cond_wait(&(jc->cvShuffleBarrier), &(jc->atomic_barrierMutex)) != 0){
         cerr << SYSTEM_ERROR << "pthread_cond_wait shuffle";
         exit(1);
     }
+    cout<< "Reduce stage\n";
+    pthread_mutex_unlock(&(jc->atomic_barrierMutex));
     reducePhase(arg, threadContext);
 
 }
@@ -312,23 +315,26 @@ void* MainThread(void* arg){
     mapPhase(jc, mainThread);
     sortPhase(mainThread);
 
+
     pthread_mutex_lock(&(jc->atomic_barrierMutex));
-    int oldValue = ++(jc->atomic_barrier);
-    pthread_mutex_unlock(&(jc->atomic_barrierMutex));
-
-    if(oldValue < jc->multiThreadLevel)
+    if(++(jc->atomic_barrier) < jc->multiThreadLevel)
     {
-
-        if(pthread_cond_wait(&(jc->cvMapSortBarrier), NULL) != 0) {
+        cout<< "wait main thread atomic barrier: "<< jc->atomic_barrier <<"\n";
+        if(pthread_cond_wait(&(jc->cvMapSortBarrier), &(jc->atomic_barrierMutex)) != 0) {
             cerr << SYSTEM_ERROR << "pthread_cond_wait mapSortBarrier main thread";
             exit(1);
         }
 
     }
+    cout<< "main thread atomic barrier: "<< jc->atomic_barrier <<"\n";
+    pthread_mutex_unlock(&(jc->atomic_barrierMutex));
 
     pthread_mutex_lock(&(jc->intermediaryElementsMutex));
     jc->fullIntermediaryElements = jc->intermediaryElements;
     pthread_mutex_unlock(&(jc->intermediaryElementsMutex));
+
+    cout << jc->intermediaryElements << "\n";
+
     jc->map_counter = 0;
     jc->jobState.stage = SHUFFLE_STAGE;
 
@@ -338,8 +344,10 @@ void* MainThread(void* arg){
         cerr << SYSTEM_ERROR << "pthread_cond_broadcast ShuffleBarrier main thread";
         exit(1);
     }
+    cout<< "Reduce stage Main Thread\n";
     reducePhase(jc, mainThread);
     jc->is_waiting = true;
+
 }
 
 
@@ -384,7 +392,7 @@ void waitForJob(JobHandle job) {
 
 void closeJobHandle(JobHandle job){
     waitForJob(job);
-
+    /*
     auto jc = (JobContext*) job;
     delete &jc->intermediateVec;
 
@@ -396,6 +404,7 @@ void closeJobHandle(JobHandle job){
     pthread_cond_destroy(&jc->cvShuffleBarrier);
     pthread_cond_destroy(&jc->cvMapSortBarrier);
     delete jc;
+     */
 
 
 }
