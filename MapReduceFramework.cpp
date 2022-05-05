@@ -14,12 +14,12 @@ struct ThreadContext{
     IntermediateVec* intermediateVec;
 
     int* intermediaryElements;
-    pthread_mutex_t intermediaryElementsMutex;
+    pthread_mutex_t* intermediaryElementsMutex;
 
     OutputVec* outputVec;
 
     int* outputElements;
-    pthread_mutex_t outputElementsMutex;
+    pthread_mutex_t* outputElementsMutex;
 };
 
 struct JobContext{
@@ -60,19 +60,20 @@ void emit2 (K2* key, V2* value, void* context){
     ThreadContext* threadContext = (ThreadContext*) context;
     IntermediatePair kv2 = IntermediatePair(key, value);
     threadContext->intermediateVec->push_back(kv2);
-    pthread_mutex_lock(&(threadContext->intermediaryElementsMutex));
+    pthread_mutex_lock((threadContext->intermediaryElementsMutex));
     (*(threadContext->intermediaryElements))++;
-    pthread_mutex_unlock(&(threadContext->intermediaryElementsMutex));
+    pthread_mutex_unlock((threadContext->intermediaryElementsMutex));
 
 }
 
 void emit3 (K3* key, V3* value, void* context){
+
     ThreadContext* threadContext = (ThreadContext*) context;
     OutputPair kv3 = OutputPair(key, value);
     threadContext->outputVec->push_back(kv3);
-    pthread_mutex_lock(&(threadContext->outputElementsMutex));
+    pthread_mutex_lock((threadContext->outputElementsMutex));
     (*(threadContext->outputElements))++;
-    pthread_mutex_unlock(&(threadContext->outputElementsMutex));
+    pthread_mutex_unlock((threadContext->outputElementsMutex));
 
 }
 
@@ -96,9 +97,7 @@ void updatePercentageShuffle(JobContext *jobContext) {
 
 void updatePercentageReduce(JobContext* jobContext, int numOfElements){
     // the jobState is shared by all threads which makes changing it a critical code segment
-    pthread_mutex_lock(&(jobContext->jobStateMutex));
     jobContext->jobState.percentage = numOfElements / jobContext->fullIntermediaryElements * 100;
-    pthread_mutex_unlock(&(jobContext->jobStateMutex));
 }
 
 /**
@@ -110,7 +109,6 @@ void updatePercentageReduce(JobContext* jobContext, int numOfElements){
 void mapPhase(void* arg, void* context){
 
     JobContext* jc = (JobContext*) arg;
-
     pthread_mutex_lock(&(jc->mapMutex));
     int oldValue = (jc->map_counter)++;
     pthread_mutex_unlock(&(jc->mapMutex));
@@ -146,17 +144,21 @@ void shufflePhase(void* arg) {
 
     while (numOfEmptyVectors < jc->multiThreadLevel){
         int i = 0;
-        while(contextsOfThreads[i]->intermediateVec->empty()){i++;} // finds first not empty vector
+        while(i< jc->multiThreadLevel and contextsOfThreads[i]->intermediateVec->empty()){i++;} // finds first not empty vector
+        if(i == jc->multiThreadLevel){return;} // if all vectors are already empty
         auto max = *(contextsOfThreads[i]->intermediateVec->begin()); // sets the max
         auto prev_max  = max;
         int max_index = i;
         for(int j=i; j < jc->multiThreadLevel; j++){
-            if(*(contextsOfThreads[j]->intermediateVec->begin()) > max){
-                max = *(contextsOfThreads[j]->intermediateVec->begin());
-                max_index = j;
-
+            if(!contextsOfThreads[j]->intermediateVec->empty()){
+                auto curKv = *(contextsOfThreads[j]->intermediateVec->begin());
+                if(curKv > max) {
+                    max = *(contextsOfThreads[j]->intermediateVec->begin());
+                    max_index = j;
+                }
             }
         }
+
         // if it's the first vector
         if(is_first){
             current_iv->push_back(max);
@@ -184,30 +186,27 @@ void shufflePhase(void* arg) {
             jc->intermediaryElements--;
             updatePercentageShuffle(jc);
         }
-
         // if this iteration made one of the old vectors empty
         if(contextsOfThreads[max_index]->intermediateVec->empty()){
             numOfEmptyVectors++;
+
         }
     }
 }
 
 void reducePhase(void* arg, void* context){
+
     JobContext* jc = (JobContext*) arg;
+
     pthread_mutex_lock(&(jc->mapMutex));
-    int oldValue = (jc->map_counter)++;
-    pthread_mutex_unlock(&(jc->mapMutex));
-
+    int oldValue  = (jc->map_counter)++;
     while(oldValue < jc->intermediateVec.size()) {
-        IntermediateVec kv = ((jc->intermediateVec))[oldValue];
-        jc->client->reduce(&kv, context);
+        IntermediateVec kv = ((jc->intermediateVec))[(oldValue)];
+        //jc->client->reduce(&kv, context);
         updatePercentageReduce(jc, kv.size());
-
-        pthread_mutex_lock(&(jc->mapMutex));
-        oldValue = (jc->map_counter)++;
-        pthread_mutex_unlock(&(jc->mapMutex));
+        oldValue  = (jc->map_counter)++;
     }
-
+    pthread_mutex_unlock(&(jc->mapMutex));
 }
 
 /*
@@ -228,8 +227,8 @@ void* mapSortReduceThread(void* arg){
     threadContext->outputVec = jc->outputVec;
     threadContext->intermediaryElements = &(jc->intermediaryElements);
     threadContext->outputElements = &(jc->outputElements);
-    threadContext->intermediaryElementsMutex = jc->intermediaryElementsMutex;
-    threadContext->outputElementsMutex = jc->outputElementsMutex;
+    threadContext->intermediaryElementsMutex = &(jc->intermediaryElementsMutex);
+    threadContext->outputElementsMutex = &(jc->outputElementsMutex);
 
     // the map phase
     mapPhase(arg, threadContext);
@@ -238,8 +237,6 @@ void* mapSortReduceThread(void* arg){
     pthread_mutex_lock(&(jc->atomic_barrierMutex));
     if(++(jc->atomic_barrier) == jc->multiThreadLevel) // indicates sort phase of this thread is over
     {
-        cout<< "MapSortBarrier Brodcast\n";
-        cout << *(threadContext->intermediaryElements) << "\n";
         // declares all threads finished the sort phase
         if (pthread_cond_broadcast(&(jc->cvMapSortBarrier)) != 0) {
             cerr << SYSTEM_ERROR << "pthread_cond_broadcast MapSort";
@@ -247,13 +244,13 @@ void* mapSortReduceThread(void* arg){
         }
     }
 
-    cout<< "wait for  ShuffleBarrier: " << jc->atomic_barrier <<"\n";
+
 
     if(pthread_cond_wait(&(jc->cvShuffleBarrier), &(jc->atomic_barrierMutex)) != 0){
         cerr << SYSTEM_ERROR << "pthread_cond_wait shuffle";
         exit(1);
     }
-    cout<< "Reduce stage\n";
+
     pthread_mutex_unlock(&(jc->atomic_barrierMutex));
     reducePhase(arg, threadContext);
 
@@ -300,8 +297,8 @@ void* MainThread(void* arg){
     mainThread->outputVec = jc->outputVec;
     mainThread->intermediaryElements = &(jc->intermediaryElements);
     mainThread->outputElements = &(jc->outputElements);
-    mainThread->intermediaryElementsMutex = jc->intermediaryElementsMutex;
-    mainThread->outputElementsMutex = jc->outputElementsMutex;
+    mainThread->intermediaryElementsMutex = &(jc->intermediaryElementsMutex);
+    mainThread->outputElementsMutex = &(jc->outputElementsMutex);
 
     jc->jobState.stage = MAP_STAGE;
     jc->jobState.percentage = 0;
@@ -319,21 +316,23 @@ void* MainThread(void* arg){
     pthread_mutex_lock(&(jc->atomic_barrierMutex));
     if(++(jc->atomic_barrier) < jc->multiThreadLevel)
     {
-        cout<< "wait main thread atomic barrier: "<< jc->atomic_barrier <<"\n";
         if(pthread_cond_wait(&(jc->cvMapSortBarrier), &(jc->atomic_barrierMutex)) != 0) {
             cerr << SYSTEM_ERROR << "pthread_cond_wait mapSortBarrier main thread";
             exit(1);
         }
 
     }
-    cout<< "main thread atomic barrier: "<< jc->atomic_barrier <<"\n";
+    else {
+
+
+    }
     pthread_mutex_unlock(&(jc->atomic_barrierMutex));
 
     pthread_mutex_lock(&(jc->intermediaryElementsMutex));
     jc->fullIntermediaryElements = jc->intermediaryElements;
     pthread_mutex_unlock(&(jc->intermediaryElementsMutex));
 
-    cout << jc->intermediaryElements << "\n";
+
 
     jc->map_counter = 0;
     jc->jobState.stage = SHUFFLE_STAGE;
@@ -344,7 +343,7 @@ void* MainThread(void* arg){
         cerr << SYSTEM_ERROR << "pthread_cond_broadcast ShuffleBarrier main thread";
         exit(1);
     }
-    cout<< "Reduce stage Main Thread\n";
+
     reducePhase(jc, mainThread);
     jc->is_waiting = true;
 
