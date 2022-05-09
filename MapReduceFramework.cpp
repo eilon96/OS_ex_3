@@ -99,7 +99,9 @@ void updatePercentageShuffle(JobContext *jobContext) {
 void updatePercentageReduce(JobContext* jobContext, int numOfElements){
     // the jobState is shared by all threads which makes changing it a critical code segment
     pthread_mutex_lock(&(jobContext->jobStateMutex));
+    cout << "numofElemnentsAdded" << numOfElements << "\n" << flush;
     jobContext->jobState.percentage += numOfElements / jobContext->fullIntermediaryElements * 100;
+    cout <<"percentage" << jobContext->jobState.percentage << "" << flush;
     pthread_mutex_unlock(&(jobContext->jobStateMutex));
 }
 
@@ -195,13 +197,11 @@ void shufflePhase(void* arg) {
                 jc->intermediateVec->push_back(current_iv);
                 current_iv->push_back(max);
                 contextsOfThreads[max_index]->intermediateVec->pop_back();
-
-
             }
 
                 // if we can keep use the current vector
             else{
-                //current_iv->push_back(max);
+                current_iv->push_back(max);
                 contextsOfThreads[max_index]->intermediateVec->pop_back();
             }
         }
@@ -220,6 +220,7 @@ void reducePhase(void* arg, void* context){
 
     while(oldValue < jc->intermediateVec->size()) {
         jc->client->reduce((*(jc->intermediateVec))[oldValue], context);
+        cout << (*(jc->intermediateVec))[oldValue]->size() << "\n" << flush;
         updatePercentageReduce(jc, (*(jc->intermediateVec))[oldValue]->size());
 
         pthread_mutex_lock(&(jc->mapMutex));
@@ -257,8 +258,8 @@ void* mapSortReduceThread(void* arg){
     pthread_mutex_lock(&(jc->atomic_barrierMutex));
     if(++(jc->atomic_barrier) == jc->multiThreadLevel) // indicates sort phase of this thread is over
     {
-        cout<< "MapSortBarrier Brodcast\n";
-        cout << *(threadContext->intermediaryElements) << "\n";
+
+
         // declares all threads finished the sort phase
         if (pthread_cond_broadcast(&(jc->cvMapSortBarrier)) != 0) {
             cerr << SYSTEM_ERROR << "pthread_cond_broadcast MapSort";
@@ -266,13 +267,13 @@ void* mapSortReduceThread(void* arg){
         }
     }
 
-    cout<< "wait for  ShuffleBarrier: " << jc->atomic_barrier <<"\n";
-    cout<< "len: " << threadContext->intermediateVec->size() <<"\n";
+
+
     if(pthread_cond_wait(&(jc->cvShuffleBarrier), &(jc->atomic_barrierMutex)) != 0){
         cerr << SYSTEM_ERROR << "pthread_cond_wait shuffle";
         exit(1);
     }
-    cout<< "Reduce stage\n" << flush;
+
     pthread_mutex_unlock(&(jc->atomic_barrierMutex));
     reducePhase(arg, threadContext);
 
@@ -339,8 +340,8 @@ void* MainThread(void* arg){
     pthread_mutex_lock(&(jc->atomic_barrierMutex));
     if(++(jc->atomic_barrier) < jc->multiThreadLevel)
     {
-        cout<< "wait main thread atomic barrier: "<< jc->atomic_barrier <<"\n";
-        cout<< "len: " << mainThread->intermediateVec->size() <<"\n";
+
+
         if(pthread_cond_wait(&(jc->cvMapSortBarrier), &(jc->atomic_barrierMutex)) != 0) {
             cerr << SYSTEM_ERROR << "pthread_cond_wait mapSortBarrier main thread";
             exit(1);
@@ -348,8 +349,8 @@ void* MainThread(void* arg){
 
     }
     else {
-        cout << "main thread atomic barrier: " << jc->atomic_barrier << "\n";
-        cout << "len: " << mainThread->intermediateVec->size() << "\n";
+
+
     }
     pthread_mutex_unlock(&(jc->atomic_barrierMutex));
 
@@ -357,13 +358,13 @@ void* MainThread(void* arg){
     jc->fullIntermediaryElements = jc->intermediaryElements;
     pthread_mutex_unlock(&(jc->intermediaryElementsMutex));
 
-    cout << jc->intermediaryElements << "\n" << flush;
+
 
     jc->map_counter = 0;
     jc->jobState.stage = SHUFFLE_STAGE;
     jc->jobState.percentage = 0;
     shufflePhase(jc);
-    cout << "inter vector size :" << jc->intermediateVec->size() <<"\n" << flush;
+
 
     jc->jobState.stage = REDUCE_STAGE;
     jc->jobState.percentage = 0;
@@ -375,11 +376,11 @@ void* MainThread(void* arg){
         exit(1);
     }
 
-    cout<< "Reduce stage Main Thread\n";
+
     reducePhase(jc, mainThread);
 
 
-    cout<< "The End\n" << flush;
+
     jc->is_waiting = true;
 
 
