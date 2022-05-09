@@ -91,7 +91,7 @@ void updatePercentageShuffle(JobContext *jobContext) {
     // the jobState is shared by all threads which makes changing it a critical code segment
     pthread_mutex_lock(&(jobContext->jobStateMutex));
     jobContext->jobState.percentage =
-            1 - ((jobContext->intermediaryElements) / jobContext->fullIntermediaryElements * 100);
+            (1 - (jobContext->intermediaryElements) / jobContext->fullIntermediaryElements) * 100;
     pthread_mutex_unlock(&(jobContext->jobStateMutex));
 }
 
@@ -99,9 +99,7 @@ void updatePercentageShuffle(JobContext *jobContext) {
 void updatePercentageReduce(JobContext* jobContext, int numOfElements){
     // the jobState is shared by all threads which makes changing it a critical code segment
     pthread_mutex_lock(&(jobContext->jobStateMutex));
-    cout << "numofElemnentsAdded" << numOfElements << "\n" << flush;
-    jobContext->jobState.percentage += numOfElements / jobContext->fullIntermediaryElements * 100;
-    cout <<"percentage" << jobContext->jobState.percentage << "" << flush;
+    jobContext->jobState.percentage += (numOfElements * 100) / jobContext->fullIntermediaryElements;
     pthread_mutex_unlock(&(jobContext->jobStateMutex));
 }
 
@@ -220,14 +218,11 @@ void reducePhase(void* arg, void* context){
 
     while(oldValue < jc->intermediateVec->size()) {
         jc->client->reduce((*(jc->intermediateVec))[oldValue], context);
-        cout << (*(jc->intermediateVec))[oldValue]->size() << "\n" << flush;
         updatePercentageReduce(jc, (*(jc->intermediateVec))[oldValue]->size());
-
         pthread_mutex_lock(&(jc->mapMutex));
         oldValue  = (jc->map_counter)++;
         pthread_mutex_unlock(&(jc->mapMutex));
     }
-
 }
 
 /*
@@ -365,25 +360,14 @@ void* MainThread(void* arg){
     jc->jobState.percentage = 0;
     shufflePhase(jc);
 
-
     jc->jobState.stage = REDUCE_STAGE;
     jc->jobState.percentage = 0;
-
-
-
     if (pthread_cond_broadcast(&(jc->cvShuffleBarrier)) != 0) {
         cerr << SYSTEM_ERROR << "pthread_cond_broadcast ShuffleBarrier main thread";
         exit(1);
     }
-
-
     reducePhase(jc, mainThread);
-
-
-
     jc->is_waiting = true;
-
-
 }
 
 
