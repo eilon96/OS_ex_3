@@ -62,9 +62,9 @@ void emit2 (K2* key, V2* value, void* context){
     ThreadContext* threadContext = (ThreadContext*) context;
     IntermediatePair kv2 = IntermediatePair(key, value);
     threadContext->intermediateVec->push_back(kv2);
-    pthread_mutex_lock((threadContext->intermediaryElementsMutex));
+    if(pthread_mutex_lock((threadContext->intermediaryElementsMutex)) != 0){cerr << SYSTEM_ERROR << "mutex_lock ";exit(1);}
     (*(threadContext->intermediaryElements))++;
-    pthread_mutex_unlock((threadContext->intermediaryElementsMutex));
+    if(pthread_mutex_unlock((threadContext->intermediaryElementsMutex)) != 0){cerr << SYSTEM_ERROR << "mutex_unlock ";exit(1);}
 
 }
 
@@ -72,10 +72,10 @@ void emit3 (K3* key, V3* value, void* context){
 
     ThreadContext* threadContext = (ThreadContext*) context;
     OutputPair kv3 = OutputPair(key, value);
-    pthread_mutex_lock((threadContext->outputElementsMutex));
+    if(pthread_mutex_lock((threadContext->outputElementsMutex)) != 0){cerr << SYSTEM_ERROR << "mutex_lock ";exit(1);} ;
     threadContext->outputVec->push_back(kv3);
     (*(threadContext->outputElements))++;
-    pthread_mutex_unlock((threadContext->outputElementsMutex));
+    if(pthread_mutex_unlock((threadContext->outputElementsMutex)) != 0){cerr << SYSTEM_ERROR << "mutex_unlock ";exit(1);} ;
 
 }
 
@@ -84,32 +84,30 @@ void emit3 (K3* key, V3* value, void* context){
  * @param jobContext
  */
 void updatePercentageMap(JobContext* jobContext) {
-    // the jobState is shared by all threads which makes changing it a critical code segment
 
-    pthread_mutex_lock(&(jobContext->jobStateMutex));
-
+    if(pthread_mutex_lock(&(jobContext->jobStateMutex)) != 0 ){cerr << SYSTEM_ERROR << "mutex_lock ";exit(1);};
     jobContext->jobState.percentage = (float)(jobContext->map_counter) / (float)jobContext->inputVec->size() * 100;
-    pthread_mutex_unlock(&(jobContext->jobStateMutex));
+    if(pthread_mutex_unlock(&(jobContext->jobStateMutex)) != 0 ){cerr << SYSTEM_ERROR << "mutex_unlock ";exit(1);};
 }
 void updatePercentageShuffle(JobContext *jobContext) {
     // the jobState is shared by all threads which makes changing it a critical code segment
-    pthread_mutex_lock(&(jobContext->jobStateMutex));
+    if(pthread_mutex_lock(&(jobContext->jobStateMutex)) != 0 ){cerr << SYSTEM_ERROR << "mutex_lock ";exit(1);};
     jobContext->jobState.percentage =
             ((float)jobContext->fullIntermediaryElements - (float)(jobContext->intermediaryElements)) /
             (float)jobContext->fullIntermediaryElements * 100;
-    pthread_mutex_unlock(&(jobContext->jobStateMutex));
+    if(pthread_mutex_unlock(&(jobContext->jobStateMutex)) != 0 ){cerr << SYSTEM_ERROR << "mutex_unlock ";exit(1);};
 }
 
 
 void updatePercentageReduce(JobContext* jobContext, float numOfElements){
     // the jobState is shared by all threads which makes changing it a critical code segment
-    pthread_mutex_lock(&(jobContext->jobStateMutex));
+    if(pthread_mutex_lock(&(jobContext->jobStateMutex)) != 0 ){cerr << SYSTEM_ERROR << "mutex_lock ";exit(1);};
     jobContext->intermediaryElements += numOfElements;
     jobContext->jobState.percentage = 100 *
                                       (float)(jobContext->intermediaryElements) / (float)jobContext->fullIntermediaryElements;
 
 
-    pthread_mutex_unlock(&(jobContext->jobStateMutex));
+    if(pthread_mutex_unlock(&(jobContext->jobStateMutex)) != 0 ){cerr << SYSTEM_ERROR << "mutex_unlock ";exit(1);};
 }
 
 /**
@@ -123,28 +121,28 @@ void mapPhase(void* arg, void* context){
 
     JobContext* jc = (JobContext*) arg;
     int oldValue;
-    pthread_mutex_lock(&(jc->mapMutex));
-    if((jc->map_counter)  < jc->inputVec->size()){oldValue = (jc->map_counter)++;}
+    if(pthread_mutex_lock(&(jc->mapMutex)) != 0 ){cerr << SYSTEM_ERROR << "mutex_lock ";exit(1);};
+    if((jc->map_counter)  < int(jc->inputVec->size())){oldValue = (jc->map_counter)++;}
     else {
-        pthread_mutex_unlock(&(jc->mapMutex));
+        if(pthread_mutex_unlock(&(jc->mapMutex)) != 0 ){cerr << SYSTEM_ERROR << "mutex_unlock ";exit(1);};
         return;
     }
-    pthread_mutex_unlock(&(jc->mapMutex));
+    if(pthread_mutex_unlock(&(jc->mapMutex)) != 0 ){cerr << SYSTEM_ERROR << "mutex_unlock ";exit(1);};
 
-    while((oldValue < jc->inputVec->size())) {
+    while((oldValue < int(jc->inputVec->size()))) {
 
         InputPair kv = (*(jc->inputVec))[oldValue];
         jc->client->map(kv.first, kv.second, context);
 
         updatePercentageMap(jc);
 
-        pthread_mutex_lock(&(jc->mapMutex));
-        if((jc->map_counter)  < jc->inputVec->size()){oldValue = (jc->map_counter)++;}
+        if(pthread_mutex_lock(&(jc->mapMutex)) != 0 ){cerr << SYSTEM_ERROR << "mutex_lock ";exit(1);};
+        if((jc->map_counter)  < int(jc->inputVec->size())){oldValue = (jc->map_counter)++;}
         else{
-            pthread_mutex_unlock(&(jc->mapMutex));
+            if(pthread_mutex_unlock(&(jc->mapMutex)) != 0 ){cerr << SYSTEM_ERROR << "mutex_unlock ";exit(1);};
             return;
         }
-        pthread_mutex_unlock(&(jc->mapMutex));
+        if(pthread_mutex_unlock(&(jc->mapMutex)) != 0 ){cerr << SYSTEM_ERROR << "mutex_unlock ";exit(1);};
     }
 }
 
@@ -233,16 +231,17 @@ void reducePhase(void* arg, void* context){
 
     JobContext* jc = (JobContext*) arg;
 
-    pthread_mutex_lock(&(jc->mapMutex));
+    if(pthread_mutex_lock(&(jc->mapMutex)) != 0 ){cerr << SYSTEM_ERROR << "mutex_lock ";exit(1);};
     int oldValue  = (jc->map_counter)++;
-    pthread_mutex_unlock(&(jc->mapMutex));
+    if(pthread_mutex_unlock(&(jc->mapMutex)) != 0 ){cerr << SYSTEM_ERROR << "mutex_unlock ";exit(1);};
 
-    while(oldValue < jc->intermediateVec->size()) {
+    while(oldValue < int(jc->intermediateVec->size())) {
         jc->client->reduce((*(jc->intermediateVec))[oldValue], context);
         updatePercentageReduce(jc, (*(jc->intermediateVec))[oldValue]->size());
-        pthread_mutex_lock(&(jc->mapMutex));
+
+        if(pthread_mutex_lock(&(jc->mapMutex)) != 0 ){cerr << SYSTEM_ERROR << "mutex_lock ";exit(1);};
         oldValue  = (jc->map_counter)++;
-        pthread_mutex_unlock(&(jc->mapMutex));
+        if(pthread_mutex_unlock(&(jc->mapMutex)) != 0 ){cerr << SYSTEM_ERROR << "mutex_unlock ";exit(1);};
     }
 }
 
@@ -271,11 +270,9 @@ void* mapSortReduceThread(void* arg){
     mapPhase(arg, threadContext);
     sortPhase(threadContext);
 
-    pthread_mutex_lock(&(jc->atomic_barrierMutex));
+    if(pthread_mutex_lock(&(jc->atomic_barrierMutex)) != 0){cerr << SYSTEM_ERROR << "mutex_lock ";exit(1);};
     if(++(jc->atomic_barrier) == jc->multiThreadLevel) // indicates sort phase of this thread is over
     {
-
-
         // declares all threads finished the sort phase
         if (pthread_cond_broadcast(&(jc->cvMapSortBarrier)) != 0) {
             cerr << SYSTEM_ERROR << "pthread_cond_broadcast MapSort";
@@ -283,16 +280,15 @@ void* mapSortReduceThread(void* arg){
         }
     }
 
-
-
     if(pthread_cond_wait(&(jc->cvShuffleBarrier), &(jc->atomic_barrierMutex)) != 0){
         cerr << SYSTEM_ERROR << "pthread_cond_wait shuffle";
         exit(1);
     }
 
-    pthread_mutex_unlock(&(jc->atomic_barrierMutex));
+    if(pthread_mutex_unlock(&(jc->atomic_barrierMutex)) != 0){cerr << SYSTEM_ERROR << "mutex_unlock ";exit(1);};
     reducePhase(arg, threadContext);
     (*(jc->fixed_threads))++;
+    return NULL;
 }
 
 
@@ -341,14 +337,26 @@ void* MainThread(void* arg){
     mainThread->intermediaryElementsMutex = &(jc->intermediaryElementsMutex);
     mainThread->outputElementsMutex = &(jc->outputElementsMutex);
 
-    pthread_mutex_lock(&(jc->jobStateMutex));
+    if(pthread_mutex_lock(&(jc->jobStateMutex)) != 0){cerr << SYSTEM_ERROR << "mutex_lock ";exit(1);};
     jc->jobState.stage = MAP_STAGE;
     jc->jobState.percentage = 0;
-    pthread_mutex_unlock(&(jc->jobStateMutex));
+    if(pthread_mutex_unlock(&(jc->jobStateMutex)) != 0){cerr << SYSTEM_ERROR << "mutex_unlock ";exit(1);};
+
+
+    pthread_attr_t tattr;
+    if(pthread_attr_init (&tattr) != 0){
+        cerr << SYSTEM_ERROR << "pthread_attr_init";
+        exit(1);
+
+    }
+    if(pthread_attr_setdetachstate (&tattr,PTHREAD_CREATE_DETACHED) != 0){
+        cerr << SYSTEM_ERROR << "pthread_attr_setdetachstate";
+        exit(1);
+    }
 
 
     for (int i = 1; i < jc->multiThreadLevel; ++i) {
-        if(pthread_create(jc->threads + i, NULL, mapSortReduceThread, jc) !=  0){
+        if(pthread_create(jc->threads + i, &tattr, mapSortReduceThread, jc) !=  0){
             cerr << SYSTEM_ERROR << "pthread_create";
             exit(1);
         }
@@ -357,7 +365,7 @@ void* MainThread(void* arg){
     mapPhase(jc, mainThread);
     sortPhase(mainThread);
 
-    pthread_mutex_lock(&(jc->atomic_barrierMutex));
+    if(pthread_mutex_lock(&(jc->atomic_barrierMutex)) != 0){cerr << SYSTEM_ERROR << "mutex_lock ";exit(1);};
     if(++(jc->atomic_barrier) < jc->multiThreadLevel)
     {
         if(pthread_cond_wait(&(jc->cvMapSortBarrier), &(jc->atomic_barrierMutex)) != 0) {
@@ -366,32 +374,41 @@ void* MainThread(void* arg){
         }
 
     }
-    pthread_mutex_unlock(&(jc->atomic_barrierMutex));
+    if(pthread_mutex_unlock(&(jc->atomic_barrierMutex)) != 0){cerr << SYSTEM_ERROR << "mutex_unlock ";exit(1);};
 
-    pthread_mutex_lock(&(jc->intermediaryElementsMutex));
+    if(pthread_mutex_lock(&(jc->intermediaryElementsMutex)) != 0){cerr << SYSTEM_ERROR << "mutex_lock ";exit(1);};
     jc->fullIntermediaryElements = jc->intermediaryElements;
-    pthread_mutex_unlock(&(jc->intermediaryElementsMutex));
+    if(pthread_mutex_unlock(&(jc->intermediaryElementsMutex)) != 0){cerr << SYSTEM_ERROR << "mutex_unlock ";exit(1);};
 
     jc->map_counter = 0;
 
-    pthread_mutex_lock(&(jc->jobStateMutex));
+    if(pthread_mutex_lock(&(jc->jobStateMutex)) != 0){cerr << SYSTEM_ERROR << "mutex_lock ";exit(1);};
     jc->jobState.stage = SHUFFLE_STAGE;
     jc->jobState.percentage = 0;
-    pthread_mutex_unlock(&(jc->jobStateMutex));
+    if(pthread_mutex_unlock(&(jc->jobStateMutex)) != 0){cerr << SYSTEM_ERROR << "mutex_unlock ";exit(1);};
     shufflePhase(jc);
 
-    pthread_mutex_lock(&(jc->jobStateMutex));
+    if(pthread_mutex_lock(&(jc->jobStateMutex)) != 0){cerr << SYSTEM_ERROR << "mutex_lock ";exit(1);};
     jc->jobState.stage = REDUCE_STAGE;
     jc->jobState.percentage = 0;
-    pthread_mutex_unlock(&(jc->jobStateMutex));
+    if(pthread_mutex_unlock(&(jc->jobStateMutex)) != 0){cerr << SYSTEM_ERROR << "mutex_unlock ";exit(1);};
 
     if (pthread_cond_broadcast(&(jc->cvShuffleBarrier)) != 0) {
         cerr << SYSTEM_ERROR << "pthread_cond_broadcast ShuffleBarrier main thread";
         exit(1);
     }
     reducePhase(jc, mainThread);
-    while(*(jc->fixed_threads) < jc->multiThreadLevel -1){}
+    while(*(jc->fixed_threads) < jc->multiThreadLevel -1){
+    }
+
     jc->is_waiting = true;
+
+    if(pthread_attr_destroy(&tattr) != 0){
+        cerr << SYSTEM_ERROR << "pthread_attr_pthread_attr_destroy";
+        exit(1);
+    }
+
+    return NULL;
 }
 
 
@@ -401,6 +418,7 @@ JobHandle startMapReduceJob(const MapReduceClient& client,
 
     auto* jobContext = new JobContext();
     initJobContext(client, inputVec, outputVec, multiThreadLevel, jobContext);
+
 
     if(pthread_create(jobContext->threads, NULL,
                       MainThread, jobContext) != 0) {
@@ -415,10 +433,10 @@ JobHandle startMapReduceJob(const MapReduceClient& client,
 
 void getJobState(JobHandle job, JobState* state){
     auto jc = (JobContext*) job;
-    pthread_mutex_lock(&jc->jobStateMutex);
+    if(pthread_mutex_lock(&jc->jobStateMutex) != 0){cerr << SYSTEM_ERROR << "mutex_lock ";exit(1);};
     state->stage = jc->jobState.stage;
     state->percentage = jc->jobState.percentage;
-    pthread_mutex_unlock(&jc->jobStateMutex);
+    if(pthread_mutex_unlock(&jc->jobStateMutex) != 0){cerr << SYSTEM_ERROR << "mutex_unlock ";exit(1);};
 }
 
 void waitForJob(JobHandle job) {
@@ -454,6 +472,7 @@ void closeJobHandle(JobHandle job){
     pthread_cond_destroy(&jc->cvMapSortBarrier);
 
     delete jc->threadsId;
+    delete jc->fixed_threads;
     delete [] jc->threads;
     delete [] jc->contexts;
 
