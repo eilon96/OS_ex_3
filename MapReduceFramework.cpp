@@ -341,19 +341,7 @@ void* MainThread(void* arg){
     jc->jobState.percentage = 0;
     if(pthread_mutex_unlock(&(jc->jobStateMutex)) != 0){cerr << SYSTEM_ERROR << "mutex_unlock ";exit(1);};
 
-    /*
-    pthread_attr_t tattr;
-    if(pthread_attr_init (&tattr) != 0){
-        cerr << SYSTEM_ERROR << "pthread_attr_init";
-        exit(1);
 
-    }
-    if(pthread_attr_setdetachstate (&tattr,PTHREAD_CREATE_DETACHED) != 0){
-        cerr << SYSTEM_ERROR << "pthread_attr_setdetachstate";
-        exit(1);
-    }
-
-    */
     for (int i = 1; i < jc->multiThreadLevel; ++i) {
         if(pthread_create(&(jc->threads[i]), NULL, mapSortReduceThread, jc) !=  0){
             cerr << SYSTEM_ERROR << "pthread_create";
@@ -397,12 +385,7 @@ void* MainThread(void* arg){
         exit(1);
     }
     reducePhase(jc, mainThread);
-    /*
-    if(pthread_attr_destroy(&tattr) != 0){
-        cerr << SYSTEM_ERROR << "pthread_attr_pthread_attr_destroy";
-        exit(1);
-    }
-     */
+
     for(int i = 1; i < jc->multiThreadLevel; i++) {
         if (pthread_join((jc->threads[i]), NULL) != 0) {
             cerr << SYSTEM_ERROR << "pthread_join waitForJob ";
