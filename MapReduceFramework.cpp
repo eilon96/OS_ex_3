@@ -284,7 +284,6 @@ void* mapSortReduceThread(void* arg){
         cerr << SYSTEM_ERROR << "pthread_cond_wait shuffle";
         exit(1);
     }
-
     if(pthread_mutex_unlock(&(jc->atomic_barrierMutex)) != 0){cerr << SYSTEM_ERROR << "mutex_unlock ";exit(1);};
     reducePhase(arg, threadContext);
     (*(jc->fixed_threads))++;
@@ -342,7 +341,7 @@ void* MainThread(void* arg){
     jc->jobState.percentage = 0;
     if(pthread_mutex_unlock(&(jc->jobStateMutex)) != 0){cerr << SYSTEM_ERROR << "mutex_unlock ";exit(1);};
 
-
+    /*
     pthread_attr_t tattr;
     if(pthread_attr_init (&tattr) != 0){
         cerr << SYSTEM_ERROR << "pthread_attr_init";
@@ -354,9 +353,9 @@ void* MainThread(void* arg){
         exit(1);
     }
 
-
+    */
     for (int i = 1; i < jc->multiThreadLevel; ++i) {
-        if(pthread_create(jc->threads + i, &tattr, mapSortReduceThread, jc) !=  0){
+        if(pthread_create(&(jc->threads[i]), NULL, mapSortReduceThread, jc) !=  0){
             cerr << SYSTEM_ERROR << "pthread_create";
             exit(1);
         }
@@ -398,16 +397,18 @@ void* MainThread(void* arg){
         exit(1);
     }
     reducePhase(jc, mainThread);
-    while(*(jc->fixed_threads) < jc->multiThreadLevel -1){
-    }
-
-    jc->is_waiting = true;
-
+    /*
     if(pthread_attr_destroy(&tattr) != 0){
         cerr << SYSTEM_ERROR << "pthread_attr_pthread_attr_destroy";
         exit(1);
     }
-
+     */
+    for(int i = 1; i < jc->multiThreadLevel; i++) {
+        if (pthread_join((jc->threads[i]), NULL) != 0) {
+            cerr << SYSTEM_ERROR << "pthread_join waitForJob ";
+            exit(1);
+        }
+    }
     return NULL;
 }
 
@@ -443,15 +444,18 @@ void waitForJob(JobHandle job) {
     auto jc = (JobContext *) job;
     if (!jc->is_waiting) {
         jc->is_waiting = true;
-        if (pthread_join((jc->threads[0]), NULL)) {
+        if (pthread_join((jc->threads[0]), NULL) != 0 ) {
             cerr << SYSTEM_ERROR << "pthread_join waitForJob ";
             exit(1);
+
         }
+
     }
 }
 
 void closeJobHandle(JobHandle job){
     waitForJob(job);
+
     auto jc = (JobContext*) job;
     for(auto & it : *jc->intermediateVec){
         delete it;
@@ -463,6 +467,7 @@ void closeJobHandle(JobHandle job){
         delete jc->contexts[i]->intermediateVec;
         delete jc->contexts[i];
     }
+
     pthread_mutex_destroy(&jc->jobStateMutex);
     pthread_mutex_destroy(&jc->atomic_barrierMutex);
     pthread_mutex_destroy(&jc->mapMutex);
@@ -475,7 +480,6 @@ void closeJobHandle(JobHandle job){
     delete jc->fixed_threads;
     delete [] jc->threads;
     delete [] jc->contexts;
-
     delete jc;
 
 
